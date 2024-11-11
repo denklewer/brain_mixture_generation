@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+Raw/
+Preprocessed/SeuratObjects.rda
+Preprocessed/Signatures - Brain.rda.rda
+Preprocessed/Signatures - SNME (Incomplete).rda
+Preprocessed/Signatures - Brain (MuSiC).rda"
