@@ -111,7 +111,7 @@ nReps <- 100 # number of mixtures to simulate
   
    ## Function to remove features
   filter.features <- function(x, search = "^MT-|^RPS|^RPL") {
-    keep <- grep(pattern = search, rownames(x@assays$RNA@counts), invert = TRUE) # ribosomal and mitochondrial genes  
+    keep <- grep(pattern = search, rownames(x@assays$RNA$counts), invert = TRUE) # ribosomal and mitochondrial genes  
     x <- subset(x, features = keep)
     return(x)
   }
@@ -167,7 +167,7 @@ rm(dat)
 
 ```{r}
 ## Annotate
-  meta <- read.table("Raw/Velmeshev2019/meta.tsv", sep = "\t", header = TRUE)
+  meta <- read.table("../Raw/Velmeshev2019/meta.tsv", sep = "\t", header = TRUE)
   m <- match(colnames(obj$VL), meta$cell)
   
   obj$VL$orig.celltype <- meta$cluster[m]
@@ -183,5 +183,160 @@ rm(dat)
 ## Preprocess and normalise
   max.depth <- get.max.depth(obj$VL)
   obj$VL <- preprocess.fun(obj$VL, max.depth = max.depth)
+```
+## Nagy
+```{r}
+dat <- Read10X("../Raw/Nagy2020/", cell.column=2)
+  obj$NG <- CreateSeuratObject(counts = dat,
+                            min.cells = round(ncol(dat) / 100),
+                            min.features = min.features,
+                            project = "Nagy")
+  rm(dat)
+```
+```{r}
+  meta <- strsplit(colnames(obj$NG), "\\.")
+```
+
+
+```{r}
+
+
+## Augment the metadata
+
+  meta <- lapply(meta, function(x) {
+    x <- c(x[1], strsplit(x[2], "_")[[1]])
+    return(x)
+  })
+  
+  meta <- do.call("rbind", meta)
+  meta <- as.data.frame(meta)
+  colnames(meta) <- c("Celltype", 
+                      "Individual", # inferred from there being 17 CTL and 17 MDD patients in the study, and there are 17 levels that are always Control and 17 always Suicide in $Disorder 
+                      "Disorder", # note that suicide is equivalent to MDD in this study
+                      "Batch", # likely batch given its correspondence across individuals, and that it has six levels which is the number of reported batches. not used by us, so of no importance
+                      "Barcode")
+  
+  obj$NG$orig.celltype <- meta$Celltype
+  obj$NG$orig.ident <- paste0("Nagy_", meta$Barcode)
+  obj$NG$Individual <- meta$Individual
+  obj$NG$Disorder <- meta$Disorder
+  
+## Minor cell filtering: remove cells labelled as "Mix", or those from MDD individuals
+  keep1 <- which(obj$NG$Disorder == "Control")
+  keep2 <- grep("Mix_", obj$NG$orig.celltype, invert = TRUE)
+  keep <- intersect(keep1, keep2)
+  obj$NG <- subset(obj$NG, cells = keep) 
+  
+## Preprocess and normalise
+  max.depth <- get.max.depth(obj$NG)
+  obj$NG <- preprocess.fun(obj$NG, max.depth = max.depth)
+```
+## Tasic
+
+```{r}
+## Load
+  dat <- read.csv("../Raw/GSE115746_cells_exon_counts.csv")
+  # load("Raw/Tasic2018_GSE115746_cells_exon_counts.rda") # instead of reading the csv
+  
+  # meta <- read.csv("Raw/Tasic2018_ST10_Full_Metadata.csv")
+  meta <- readxl::read_xlsx("../Raw/41586_2018_654_MOESM3_ESM/Supplementary_Table_10_Full_Metadata.xlsx", sheet = 1)
+  meta <- as.data.frame(meta)
+  rownames(meta) <- meta$sample_name
+  
+## Convert to human EnsID
+  # move gene names to rows
+  rownames(dat) <- dat$X
+  
+  # filter to homologous genes
+  homologues <- read.delim("../Raw/HOM_MouseHumanSequence.txt")
+  dat <- dat[which(rownames(dat) %in% homologues$Symbol),]
+  
+  # replace mouse gene symbol with human gene symbol
+  m <- match(rownames(dat), homologues$Symbol)
+  m <- m + 1
+  dat$Symbol <- homologues$Symbol[m]
+  
+  remove <- which(is.na(dat$Symbol)) # removes NAs
+  dat <- dat[-remove,]
+  
+  remove <- dat$Symbol[which(duplicated(dat$Symbol))] # removes duplicated genes
+  dat <- dat[-which(dat$Symbol %in% remove),]
+  
+  rownames(dat) <- dat$Symbol
+  dat <- dat[,-which(colnames(dat) == "Symbol")]
+  
+## First pass filtering of cells
+  # restrict to cells with metadata
+  keep <- intersect(colnames(dat), meta$sample_name)
+  dat <- dat[,keep]
+  meta <- meta[keep,]
+  
+  # restrict to ALM (anterior lateral motor cortex), as that's a frontal cortical areas
+  keep <- which(meta$brain_region == "ALM")
+  dat <- dat[,keep]
+  meta <- meta[keep,]
+  
+  # filter out classless cells or those classified as low quality
+  remove <- which(meta$class %in% c("Low Quality", "No Class"))
+  dat <- dat[,-remove]
+  meta <- meta[-remove,]
+  
+  
+## Make into Seurat object!
+  obj$TS <- CreateSeuratObject(counts = dat,
+                               min.cells = round(ncol(dat) / 100),
+                               min.features = min.features,
+                               project = "Tasic")
+  rm(dat)
+  
+## Augment the metadata
+  obj$TS$Individual <- as.character(meta$donor)
+  obj$TS$orig.celltype <- as.character(meta$cluster)
+  obj$TS$Class <- as.character(meta$class)
+  obj$TS$Subclass <- as.character(meta$subclass)
+  
+## Remove celltypes
+  keep <- grep("Peri|^SMC|^VLMC", obj$TS$orig.celltype, invert = TRUE) # this removes pericytes, smooth muscle cells, and VLMCs
+  obj$TS <- subset(obj$TS, cells = keep)  
+  
+## Preprocess and normalise
+  max.depth <- get.max.depth(obj$TS)
+  obj$TS <- preprocess.fun(obj$TS, max.depth = max.depth)
+  
+```
+## Lake
+```{r}
+## Load
+  dat <- read.table("../Raw/GSE97930_FrontalCortex_snDrop-seq_UMI_Count_Matrix_08-01-2017.txt", sep = "\t")
+  
+  meta <- data.frame(SampleID = colnames(dat), 
+                                 orig.celltype = sapply(strsplit(colnames(dat), "_"), `[`, 1),
+                                 Individual = sapply(strsplit(colnames(dat), "_"), `[`, 2))
+  
+  obj$LK <- CreateSeuratObject(counts = dat,
+                               min.cells = round(ncol(dat) / 100),
+                               min.features = min.features,
+                               project = "Lake")  
+
+## Augment metadata
+  obj$LK$orig.celltype <- meta$orig.celltype
+  obj$LK$Individual <- meta$Individual
+  
+  
+## Preprocess and normalise
+  max.depth <- get.max.depth(obj$LK)
+  obj$LK <- preprocess.fun(obj$LK, max.depth = max.depth)
+  
+## Minor cell filtering: remove Pericytes and Endothelia
+  keep <- which(!(obj$LK$orig.celltype %in% c("Per", "End")))
+  obj$LK <- subset(obj$LK, cells = keep) 
+
+```
+
+## Save
+```{r}
+## Save
+obj <- lapply(obj, filter.features) # this removes mitochondrial and ribosomal reads
+save(obj, file = "../Preprocessed/SeuratObjects.rda")
 ```
 

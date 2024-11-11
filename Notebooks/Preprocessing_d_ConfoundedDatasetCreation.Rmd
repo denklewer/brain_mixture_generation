@@ -1,0 +1,66 @@
+
+
+
+## Functions and packages
+
+```{r}
+source("../Scripts/Fun_Composition.R")
+source("../Scripts/Fun_Preprocessing.R")
+source("../Scripts/Fun_Parameters.R")
+
+```
+
+## Load and organise the source data  ----
+
+# using CA data from the MTG
+```{r}
+
+## Load
+load("../Preprocessed/SeuratObjects.rda")
+CA.cells <- as.data.frame(obj$CA@assays$RNA$counts)
+CA.meta <- obj$CA@meta.data
+  
+## Remove microglia
+remove <- grep("Micro", CA.meta$orig.celltype)
+CA.cells <- CA.cells[,-remove]
+CA.meta <- CA.meta[-remove,]
+  
+## Merge celltypes
+y <- x <- CA.meta$orig.celltype
+y[grep("^Ex", x)] <- "Excitatory"
+y[grep("^In", x)] <- "Inhibitory"
+y[grep("^Astro", x)] <- "Astrocytes"
+y[grep("^Oli", x)] <- "Oligodendrocytes"
+y[grep("^OPC", x)] <- "OPC"
+
+CA.meta$merged <- y
+  
+  # set celltype label to the colnames of the expression dataframe
+colnames(CA.cells) <- y
+
+
+# filter to highly expressed genes
+min.n <- min(table(colnames(CA.cells)))
+keep <- which(rowSums(CA.cells > 10) > min.n) # greater than 1 count in at least 238 samples (i.e. the number of samples in the smallest group)
+
+CA.cells <- CA.cells[keep,] # no need for filtering CA.meta, no longer being used
+  
+## Create new CA signature for marker generation
+  CA.sig <- list()
+  
+  for(k in levels(as.factor(y))) {
+    use <- which(colnames(CA.cells) == k)
+    
+    temp <- apply(CA.cells[,use], 2, function(x) {
+      lib.size <- 10^6 / sum(x)
+      x <- x * lib.size
+      return(x)
+    })
+    
+    CA.sig[[k]] <- rowMeans(temp)
+  }
+  
+  CA.sig <- as.data.frame(do.call("cbind", CA.sig))
+  write.csv(CA.sig, "../Preprocessed/ConfoundingComposition_Signature.csv")
+```
+
